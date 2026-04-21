@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <title>Kapal Path Control | AquaSense + Marine Pilot</title>
+  
+  <!-- Leaflet CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Chart.js untuk visualisasi data air -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+
+  <!-- Font Awesome 6 -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      background: #0a2e38;
+      font-family: 'Inter', -apple-system, 'Segoe UI', system-ui, sans-serif;
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+      position: fixed;
+    }
+
+    .fullscreen-marine {
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+
+    #map {
+      width: 100%;
+      height: 100%;
+      background: #c8dde8;
+      z-index: 1;
+    }
+
+    /* Sembunyikan kontrol zoom bawaan Leaflet (+/-) */
+    .leaflet-control-zoom {
+      display: none !important;
+    }
+
+    /* Panel kualitas air - dengan tombol minimize */
+    .sensor-panel {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      right: 16px;
+      background: rgba(10, 35, 40, 0.92);
+      backdrop-filter: blur(20px);
+      border-radius: 32px;
+      z-index: 1000;
+      border: 1px solid rgba(255,255,220,0.25);
+      box-shadow: 0 12px 28px rgba(0,0,0,0.3);
+      transition: all 0.3s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+      max-width: 360px;
+      overflow: hidden;
+    }
+
+    .sensor-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 16px;
+      cursor: pointer;
+      user-select: none;
+      background: rgba(0, 0, 0, 0.2);
+    }
+
+    .sensor-header h3 {
+      color: white;
+      font-size: 1rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0;
+    }
+
+    .sensor-header h3 i {
+      color: #5fd9e8;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .refresh-sensor, .minimize-btn {
+      background: rgba(0,0,0,0.5);
+      border: none;
+      color: #b9f3ff;
+      width: 32px;
+      height: 32px;
+      border-radius: 30px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: 0.1s;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .refresh-sensor:active, .minimize-btn:active {
+      transform: scale(0.92);
+    }
+
+    .sensor-content {
+      transition: all 0.3s ease;
+      overflow: hidden;
+    }
+
+    .sensor-content.collapsed {
+      max-height: 0 !important;
+      padding: 0 16px;
+      opacity: 0;
+      visibility: hidden;
+    }
+
+    .sensor-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      padding: 0 16px 12px 16px;
+    }
+
+    .sensor-card {
+      background: rgba(0, 0, 0, 0.45);
+      border-radius: 24px;
+      padding: 10px 8px;
+      text-align: center;
+      backdrop-filter: blur(4px);
+      border: 1px solid rgba(255,255,210,0.2);
+    }
+
+    .sensor-label {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-weight: 600;
+      color: #bbe4ed;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .sensor-value {
+      font-size: 1.5rem;
+      font-weight: 800;
+      color: white;
+      line-height: 1.2;
+      margin-top: 4px;
+    }
+
+    .sensor-unit {
+      font-size: 0.7rem;
+      font-weight: 500;
+      color: #9bcbd6;
+    }
+
+    .status-badge {
+      font-size: 0.6rem;
+      background: rgba(0,0,0,0.5);
+      border-radius: 20px;
+      padding: 4px 10px;
+      display: inline-block;
+      margin-top: 6px;
+    }
+
+    .chart-container {
+      margin: 0 16px 16px 16px;
+      background: rgba(0,0,0,0.3);
+      border-radius: 20px;
+      padding: 8px;
+    }
+
+    canvas#waterQualityChart {
+      max-height: 100px;
+      width: 100%;
+    }
+
+    /* Panel bawah untuk navigasi kapal */
+    .floating-panel {
+      position: absolute;
+      bottom: 20px;
+      left: 16px;
+      right: 16px;
+      background: rgba(18, 38, 44, 0.92);
+      backdrop-filter: blur(20px);
+      border-radius: 36px;
+      padding: 14px 18px;
+      box-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.5);
+      z-index: 1000;
+      border: 1px solid rgba(255, 255, 245, 0.25);
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid rgba(255,255,220,0.15);
+    }
+
+    .title-section {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .title-section i {
+      font-size: 1.5rem;
+      color: #6bc2d0;
+    }
+
+    .title-section h2 {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: white;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .btn {
+      flex: 1;
+      border: none;
+      padding: 10px 6px;
+      border-radius: 60px;
+      font-weight: 700;
+      font-size: 0.8rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      cursor: pointer;
+      background: rgba(0, 0, 0, 0.55);
+      color: white;
+      border: 1px solid rgba(255,255,210,0.25);
+    }
+
+    .btn-primary {
+      background: #1f7e8c;
+    }
+    .btn-secondary {
+      background: #2d6f6fb3;
+    }
+    .btn:active {
+      transform: scale(0.97);
+    }
+
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      background: rgba(0, 0, 0, 0.35);
+      border-radius: 80px;
+      padding: 6px 12px;
+      margin-bottom: 12px;
+    }
+
+    .status-chip, .counter-chip {
+      font-size: 0.7rem;
+      font-weight: 600;
+      background: rgba(255,255,240,0.12);
+      padding: 5px 14px;
+      border-radius: 50px;
+      color: #f0f9fe;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .active-mode {
+      background: #f5a65bcc;
+      color: #231f1a;
+    }
+
+    .coord-preview {
+      background: rgba(0,0,0,0.5);
+      border-radius: 40px;
+      padding: 5px 12px;
+      font-size: 0.6rem;
+      font-family: monospace;
+      color: #c7e9f0;
+      text-align: center;
+    }
+
+    @media (max-width: 550px) {
+      .sensor-panel { top: 12px; left: 12px; right: 12px; max-width: none; }
+      .sensor-value { font-size: 1.2rem; }
+      .sensor-grid { gap: 8px; }
+      .floating-panel { padding: 10px 12px; bottom: 12px; left: 12px; right: 12px; }
+      .btn { padding: 8px 4px; font-size: 0.7rem; }
+    }
+
+    .leaflet-tooltip { background: #103f4be6; border: none; color: white; border-radius: 20px; }
+    #map { cursor: crosshair; }
+  </style>
+</head>
+<body>
+<div class="fullscreen-marine">
+  <div id="map"></div>
+
+  <!-- PANEL SENSOR AIR (Atas) - BISA MINIMIZE, NILAI AWAL 0 -->
+  <div class="sensor-panel" id="sensorPanel">
+    <div class="sensor-header" id="sensorHeaderToggle">
+      <h3><i class="fas fa-water"></i> Kualitas Air</h3>
+      <div class="header-actions">
+        <button id="refreshSensorBtn" class="refresh-sensor"><i class="fas fa-sync-alt"></i></button>
+        <button id="minimizeSensorBtn" class="minimize-btn"><i class="fas fa-chevron-up"></i></button>
+      </div>
+    </div>
+    <div class="sensor-content" id="sensorContent">
+      <div class="sensor-grid">
+        <div class="sensor-card">
+          <div class="sensor-label"><i class="fas fa-thermometer-half"></i> Suhu Air</div>
+          <div class="sensor-value" id="tempValue">0.0 <span class="sensor-unit">°C</span></div>
+          <div class="status-badge" id="tempStatus">--</div>
+        </div>
+        <div class="sensor-card">
+          <div class="sensor-label"><i class="fas fa-flask"></i> pH Air</div>
+          <div class="sensor-value" id="phValue">0.00</div>
+          <div class="status-badge" id="phStatus">--</div>
+        </div>
+        <div class="sensor-card">
+          <div class="sensor-label"><i class="fas fa-droplet"></i> Amonia (NH₃)</div>
+          <div class="sensor-value" id="ammoniaValue">0.000 <span class="sensor-unit">ppm</span></div>
+          <div class="status-badge" id="ammoniaStatus">--</div>
+        </div>
+        <div class="sensor-card">
+          <div class="sensor-label"><i class="fas fa-tint"></i> Kelembapan Udara</div>
+          <div class="sensor-value" id="humidityValue">0 <span class="sensor-unit">%</span></div>
+          <div class="status-badge" id="humidityStatus">--</div>
+        </div>
+      </div>
+      <div class="chart-container">
+        <canvas id="waterQualityChart" width="300" height="100" style="height: 100px; width: 100%;"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- PANEL KONTROL KAPAL (Bawah) -->
+  <div class="floating-panel">
+    <div class="panel-header">
+      <div class="title-section">
+        <i class="fas fa-ship"></i>
+        <h2>Kapal Path <span style="font-size:0.7rem;">Pilot</span></h2>
+      </div>
+      <div class="esp-badge" style="background:rgba(0,0,0,0.5); padding:4px 12px; border-radius:40px; font-size:0.65rem; color:#adeeff;">
+        <i class="fas fa-microchip"></i> ESP32
+      </div>
+    </div>
+
+    <div class="button-group">
+      <button id="drawBtn" class="btn btn-primary"><i class="fas fa-draw-polygon"></i> Gambar Jalur</button>
+      <button id="sendBtn" class="btn btn-secondary"><i class="fas fa-paper-plane"></i> Kirim ke ESP32</button>
+    </div>
+
+    <div class="status-row">
+      <span id="drawStatus" class="status-chip"><i class="fas fa-pause-circle"></i> Standby</span>
+      <span id="pointCounter" class="counter-chip"><i class="fas fa-map-pin"></i> 0 WP</span>
+    </div>
+
+    <div id="coordPreview" class="coord-preview">
+      <i class="fas fa-compass"></i> Tap "Gambar Jalur" lalu peta
+    </div>
+  </div>
+</div>
+
+<script>
+  // ======================== 1. INISIALISASI PETA (ZOOM CONTROL DINONAKTIFKAN) ========================
+  const map = L.map('map', { 
+    zoomControl: false,  // Menghilangkan tombol + / - pada peta
+    attributionControl: true 
+  }).setView([-6.2, 106.8], 13);
+  
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OSM & CartoDB',
+    subdomains: 'abcd',
+    maxZoom: 19,
+  }).addTo(map);
+
+  // Data jalur kapal
+  let points = [];
+  let polylineLayer = null;
+  let drawingActive = false;
+  let markers = [];
+
+  // ======================== 2. FUNGSI SENSOR AIR (SEMUA NILAI AWAL 0) ========================
+  let currentTemp = 0;
+  let currentPh = 0;
+  let currentAmmonia = 0;
+  let currentHumidity = 0;
+  let hasData = false;
+  let qualityChart;
+  
+  function initChart() {
+    const ctx = document.getElementById('waterQualityChart').getContext('2d');
+    qualityChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: ['pH', 'Amonia (x10)', 'Kelembapan/10'],
+        datasets: [{
+          label: 'Nilai Normalisasi',
+          data: [0, 0, 0],
+          backgroundColor: 'rgba(72, 187, 200, 0.3)',
+          borderColor: '#48bbc9',
+          borderWidth: 2,
+          pointBackgroundColor: '#ffdd99',
+          tension: 0.2,
+          fill: true
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        plugins: { legend: { labels: { color: '#eef4ff', font: { size: 9 } } } },
+        scales: { y: { min: 0, max: 10, grid: { color: '#2f6b77' }, ticks: { color: '#cdeef5' } },
+                  x: { ticks: { color: '#cdeef5' } } }
+      }
+    });
+  }
+
+  function generateRealisticData() {
+    let temp = 22 + Math.random() * 12;
+    temp = parseFloat(temp.toFixed(1));
+    let ph = 7.0 - (temp - 27) * 0.02 + (Math.random() - 0.5) * 0.3;
+    ph = parseFloat(Math.min(8.3, Math.max(6.3, ph)).toFixed(2));
+    let ammonia = 0.05 + Math.pow(1.05, temp - 24) * 0.02 + Math.random() * 0.08;
+    ammonia = parseFloat(Math.min(1.0, Math.max(0.01, ammonia)).toFixed(3));
+    let humidity = 50 + (temp - 22) * 1.5 + (Math.random() - 0.5) * 8;
+    humidity = Math.min(95, Math.max(35, Math.round(humidity)));
+    return { temp, ph, ammonia, humidity };
+  }
+
+  function refreshSensorDisplay() {
+    const data = generateRealisticData();
+    currentTemp = data.temp;
+    currentPh = data.ph;
+    currentAmmonia = data.ammonia;
+    currentHumidity = data.humidity;
+    hasData = true;
+    
+    document.getElementById('tempValue').innerHTML = `${currentTemp} <span class="sensor-unit">°C</span>`;
+    document.getElementById('phValue').innerHTML = currentPh;
+    document.getElementById('ammoniaValue').innerHTML = `${currentAmmonia} <span class="sensor-unit">ppm</span>`;
+    document.getElementById('humidityValue').innerHTML = `${currentHumidity} <span class="sensor-unit">%</span>`;
+    
+    let tempStatus = currentTemp < 24 ? 'Dingin' : (currentTemp > 32 ? 'Panas' : 'Normal');
+    let phStatus = currentPh < 6.8 ? 'Asam' : (currentPh > 7.8 ? 'Basa' : 'Netral');
+    let ammoniaStatus = currentAmmonia > 0.5 ? 'Berbahaya!' : (currentAmmonia > 0.2 ? 'Waspada' : 'Aman');
+    let humidityStatus = currentHumidity > 85 ? 'Lembab' : (currentHumidity < 50 ? 'Kering' : 'Normal');
+    
+    document.getElementById('tempStatus').innerHTML = `<i class="fas fa-temperature-low"></i> ${tempStatus}`;
+    document.getElementById('phStatus').innerHTML = `<i class="fas fa-vial"></i> ${phStatus}`;
+    document.getElementById('ammoniaStatus').innerHTML = `<i class="fas fa-skull-crosswalk"></i> ${ammoniaStatus}`;
+    document.getElementById('humidityStatus').innerHTML = `<i class="fas fa-water"></i> ${humidityStatus}`;
+    
+    if (qualityChart && hasData && currentPh > 0) {
+      let normPh = ((currentPh - 6) / 2) * 10;
+      normPh = Math.min(10, Math.max(0, normPh));
+      let normAmmonia = Math.min(10, currentAmmonia * 10);
+      let normHumidity = currentHumidity / 10;
+      qualityChart.data.datasets[0].data = [normPh, normAmmonia, normHumidity];
+      qualityChart.update();
+    }
+  }
+  
+  function manualRefresh() {
+    refreshSensorDisplay();
+    showToast("🔄 Data kualitas air diperbarui", "#2c7a7a");
+  }
+  
+  // ======================== 3. MINIMIZE PANEL SENSOR ========================
+  let isCollapsed = false;
+  const sensorContent = document.getElementById('sensorContent');
+  const minimizeBtn = document.getElementById('minimizeSensorBtn');
+  const sensorHeader = document.getElementById('sensorHeaderToggle');
+  
+  function toggleSensorPanel() {
+    isCollapsed = !isCollapsed;
+    if (isCollapsed) {
+      sensorContent.classList.add('collapsed');
+      minimizeBtn.innerHTML = '<i class="fas fa-chevron-down"></i>';
+    } else {
+      sensorContent.classList.remove('collapsed');
+      minimizeBtn.innerHTML = '<i class="fas fa-chevron-up"></i>';
+    }
+  }
+  
+  minimizeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleSensorPanel();
+  });
+  
+  sensorHeader.addEventListener('click', (e) => {
+    if (e.target.closest('#refreshSensorBtn')) return;
+    toggleSensorPanel();
+  });
+  
+  // ======================== 4. FUNGSI NAVIGASI KAPAL ========================
+  function updateUI() {
+    document.getElementById('pointCounter').innerHTML = `<i class="fas fa-map-pin"></i> ${points.length} WP`;
+    const previewSpan = document.getElementById('coordPreview');
+    if (points.length === 0) previewSpan.innerHTML = `<i class="fas fa-compass"></i> Klik "Gambar Jalur" lalu tap peta`;
+    else {
+      const last = points[points.length-1];
+      previewSpan.innerHTML = `<i class="fas fa-map-marker-alt"></i> Terakhir: ${last[0].toFixed(5)}°, ${last[1].toFixed(5)}  •  Total: ${points.length}`;
+    }
+    const statusSpan = document.getElementById('drawStatus');
+    if (drawingActive) {
+      statusSpan.innerHTML = '<i class="fas fa-pen-fancy"></i> Mode GAMBAR (tap peta)';
+      statusSpan.classList.add('active-mode');
+    } else {
+      statusSpan.innerHTML = '<i class="fas fa-eye"></i> Mode Standby';
+      statusSpan.classList.remove('active-mode');
+    }
+  }
+
+  function redrawMap() {
+    if (polylineLayer) map.removeLayer(polylineLayer);
+    markers.forEach(m => map.removeLayer(m));
+    markers = [];
+    if (points.length >= 2) {
+      polylineLayer = L.polyline(points, { color: '#2ea5c4', weight: 5, opacity: 0.95 }).addTo(map);
+    }
+    points.forEach((point, idx) => {
+      const icon = L.divIcon({
+        html: `<div style="background:#1c7b8c; width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center; border:2px solid white; font-weight:800; color:white;">${idx+1}</div>`,
+        iconSize: [30, 30]
+      });
+      const marker = L.marker(point, { icon }).addTo(map);
+      marker.bindTooltip(`WP ${idx+1}<br>${point[0].toFixed(5)}, ${point[1].toFixed(5)}`, { sticky: true });
+      markers.push(marker);
+    });
+    if (points.length) map.fitBounds(L.latLngBounds(points).pad(0.2));
+    updateUI();
+  }
+
+  function resetPath() {
+    points = [];
+    if (polylineLayer) map.removeLayer(polylineLayer);
+    markers.forEach(m => map.removeLayer(m));
+    markers = [];
+    updateUI();
+  }
+
+  function activateDrawMode() {
+    resetPath();
+    drawingActive = true;
+    updateUI();
+    showToast("✏️ Mode Gambar Aktif — tap peta untuk waypoint", "#1b7f8c");
+  }
+
+  function haversine(lat1, lon1, lat2, lon2) {
+    const R = 6371e3;
+    const φ1 = lat1 * Math.PI/180, φ2 = lat2 * Math.PI/180;
+    const Δφ = (lat2-lat1)*Math.PI/180, Δλ = (lon2-lon1)*Math.PI/180;
+    const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+  
+  function convertPathToCommands(pointsArray, speed=0.5) {
+    let cmds = [];
+    for (let i=0; i<pointsArray.length-1; i++) {
+      const dist = haversine(pointsArray[i][0], pointsArray[i][1], pointsArray[i+1][0], pointsArray[i+1][1]);
+      let t = Math.max(120, Math.round((dist/speed)*1000));
+      cmds.push({ cmd: "F", time: t });
+      cmds.push({ cmd: "R", time: 600 });
+    }
+    if (cmds.length && cmds[cmds.length-1].cmd === "R") cmds.pop();
+    return cmds;
+  }
+
+  async function sendToESP32() {
+    if (points.length < 2) { showToast("⚠️ Minimal 2 waypoint!", "#e67e22"); return; }
+    const commands = convertPathToCommands(points);
+    if (!commands.length) { showToast("❌ Gagal buat perintah", "#c0392b"); return; }
+    document.getElementById('coordPreview').innerHTML = `<i class="fas fa-microchip"></i> Mengirim ${commands.length} cmd...`;
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch("http://192.168.4.1/path", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(commands), signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      if (res.ok) showToast("✅ Perintah terkirim! Kapal berlayar.", "#2b7a5c");
+      else showToast(`⚠️ ESP error ${res.status}`, "#e67e22");
+    } catch(e) {
+      showToast("❌ Gagal kirim ke ESP32, cek koneksi", "#c0392b");
+    }
+    setTimeout(() => updateUI(), 2000);
+  }
+
+  function showToast(msg, bg) {
+    const t = document.createElement('div');
+    t.innerText = msg;
+    t.style.cssText = `position:fixed; bottom:110px; left:20px; right:20px; background:${bg}; color:white; padding:10px 18px; border-radius:60px; font-weight:600; font-size:0.8rem; text-align:center; z-index:10001; backdrop-filter:blur(8px);`;
+    document.body.appendChild(t);
+    setTimeout(() => { t.style.opacity='0'; setTimeout(()=>t.remove(),300); }, 2500);
+  }
+
+  // ======================== 5. EVENT & INTERAKSI ========================
+  map.on('click', (e) => {
+    if (!drawingActive) return;
+    points.push([e.latlng.lat, e.latlng.lng]);
+    redrawMap();
+    if (navigator.vibrate) navigator.vibrate(30);
+  });
+
+  document.getElementById('drawBtn').addEventListener('click', () => {
+    if (drawingActive) { resetPath(); drawingActive = true; updateUI(); showToast("🔄 Jalur baru, tap peta", "#2c6e6e"); }
+    else activateDrawMode();
+  });
+  document.getElementById('sendBtn').addEventListener('click', sendToESP32);
+  document.getElementById('refreshSensorBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    manualRefresh();
+  });
+  
+  document.getElementById('drawStatus').addEventListener('dblclick', () => {
+    if (drawingActive) { drawingActive = false; updateUI(); showToast("🔒 Mode gambar OFF", "#4b6e7e"); }
+  });
+
+  // ======================== 6. SIMULASI SENSOR OTOMATIS ========================
+  function startSensorSimulation() {
+    setTimeout(() => {
+      refreshSensorDisplay();
+    }, 500);
+    setInterval(() => {
+      refreshSensorDisplay();
+    }, 7000);
+  }
+
+  initChart();
+  startSensorSimulation();
+  updateUI();
+  map.attributionControl.setPosition('bottomleft');
+  
+  const style = document.createElement('style');
+  style.textContent = `.leaflet-control-attribution { background: rgba(0,0,0,0.5); border-radius: 20px; font-size: 9px; }`;
+  document.head.appendChild(style);
+</script>
+</body>
+</html>
